@@ -8,6 +8,23 @@
 // [76, 64, 52, 40, 39, 38].forEach((value) => 
 //     console.log(`Set P(${value}) = ${poolPitch(value, sampleRate, frameSize, pitchRef, freqRef)}`));
 
+// Ensure consistent data types
+function convertToComplexArray(floatArray) {
+    return floatArray.map(value => ({ real: value, imag: 0 }));
+}
+
+// Extract audio signal
+let x = async (URL) => {
+    console.log("Step: Decoding");
+    return fetch(URL)
+    .then(data => data.arrayBuffer())
+    .then(arrayBuffer => ctx.decodeAudioData(arrayBuffer))
+    .then(audioData => {
+        console.log(`--Audio duration: ${convertHMS(audioData.length/sampleRate)} minutes`)
+        return audioData.getChannelData(0)
+    })
+
+}
 
 // Calculate frequency from MIDI pitch
 let fPitch = (p, pitchRef, freqRef) => 2 ** ((p-pitchRef) / pitchClasses) * freqRef;

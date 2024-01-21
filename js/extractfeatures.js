@@ -6,118 +6,237 @@ const midiPitches = 128;
 const pitchClasses = 12;
 const pitchRef = 69;
 const freqRef = 440;
+const windowCache = {};
 
 let ctx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: `${sampleRate}`});
-// ctx.sampleRate = sampleRate;
 
-// import FFT from 'fft.js';
+// Window Function (Hann Window for example)
+function applyWindowFunction(signal, windowSize) {
+    if (!windowCache[windowSize]) {
+        throw new Error(`Window size ${windowSize} not precomputed.`);
+    }
 
+    return signal.map((value, index) => value * windowCache[windowSize][index]);
+}
 
-async function analyseAudio(audioBuffer) {
-    // Create a new Web Worker instance
-    const cqtWorker = new Worker('cqtWorker.js');
+// Function to zero-pad the signal to the desired length
+function padSignal(signal, length) {
+    if (signal.length >= length) {
+        return signal.slice(0, length);
+    } else {
+        return [...signal, ...new Array(length - signal.length).fill(0)];
+    }
+}
 
-    // Send audio data to the worker
-    cqtWorker.postMessage({
-        audioBuffer: audioBuffer.getChannelData(0), // Assuming mono channel
-        sampleRate: audioBuffer.sampleRate, // Reading the sample rate
-        minFreq: 27.5, // Example value, adjust as needed
-        binsPerOctave: 12, // Example value
-        Q: 1 // Example Q factor
-    });
+function complexExp(theta) {
+    return {
+        real: Math.cos(theta),
+        imag: Math.sin(theta) // Note the positive sign for the imaginary part
+    };
+}
 
-    return new Promise((resolve, reject) => {
-        cqtWorker.onmessage = function(e) {
-            const { spectrogram } = e.data;
+// Utility functions for complex number operations
+function complexAdd(a, b) {
+    return { real: a.real + b.real, imag: a.imag + b.imag };
+}
 
-            // Continue with feature extraction using the CQT spectrogram
-            // For example, computeSpecLogFreq, computeChroma, etc.
+function complexSubtract(a, b) {
+    return { real: a.real - b.real, imag: a.imag - b.imag };
+}
 
-            let C = computeChroma(logSpec, pitchClasses, midiPitches);
-            let normC = normalizeFeature(C, 0.001);
-        
-            /* let plot = [
-                {
-                    z: logSpec,
-                    type: 'heatmap',
-                    colorscale: 'Greys'
-                }
-            ];
-            let plotAudio = chromaHeatMap(plot, 'Spectrum X_n');
-            Plotly.newPlot('audiofeatures', plot, plotAudio['layout'], {scrollZoom: false}); */
-        
-            // Save some resources
-            signal = null;
-            magSpec = null;
-            logComp = null;
-            logSpec = null;
-            C = null;
-            ctx.suspend();
-        
-            resolve(finalFeatures);
-            
-            return normC;
-        };
+function complexMultiply(a, b) {
+    if (!a || !b) {
+        console.error("Complex multiplication error: one of the operands is undefined", { a, b });
+        return { real: 0, imag: 0 }; // Return a default value to avoid further errors
+    }
 
-        cqtWorker.onerror = function(e) {
-            reject(e.message);
-        };
+    return {
+        real: a.real * b.real - a.imag * b.imag,
+        imag: a.real * b.imag + a.imag * b.real
+    };
+}
 
-        // Send audio data to the worker
-        cqtWorker.postMessage({
-            audioBuffer: audioBuffer.getChannelData(0), // Assuming mono channel
-            sampleRate: audioBuffer.sampleRate,
-            minFreq: 27.5, // Example value, adjust as needed
-            binsPerOctave: 12, // Example value
-            Q: 1 // Example Q factor
-        });
+// Extract magnitude from FFT result (evtl. ersetzen)
+function extractMagnitude(fftResult) {
+    return fftResult.map(c => Math.hypot(c.real, c.imag));
+}
+
+// Function to find the nearest power of two
+function nearestPowerOfTwo(num) {
+    return Math.pow(2, Math.ceil(Math.log(num) / Math.log(2)));
+}
+
+// Function to zero-pad the signal to the nearest power of two
+function padSignalToPowerOfTwo(signal) {
+    const targetLength = nearestPowerOfTwo(signal.length);
+    if (signal.length < targetLength) {
+        return [...signal, ...new Array(targetLength - signal.length).fill(0)];
+    }
+    return signal;
+}
+
+// Precompute Hann Windows specifically for CQT
+function precomputeHannWindowsForCQT(minFreq, maxFreq, binsPerOctave, sampleRate) {
+    const frequencies = calculateCQTFrequencies(minFreq, maxFreq, binsPerOctave);
+    frequencies.forEach(freq => {
+        const windowSize = nearestPowerOfTwo(Math.floor(sampleRate / freq));
+        if (!windowCache[windowSize]) {
+            windowCache[windowSize] = new Array(windowSize);
+            for (let i = 0; i < windowSize; i++) {
+                windowCache[windowSize][i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (windowSize - 1)));
+            }
+        }
     });
 }
 
+// Audio feature extraction pipeline
+let analyseAudio = async (URL) => {
+    ctx.resume();
 
-// // Audio feature extraction pipeline
-// let analyseAudio = async (URL) => {
-//     ctx.resume();
+    // Extract audio signal
+    let signal = await x(URL);
+    signal = padSignalToPowerOfTwo(signal); // Ensure signal length is a power of two
 
-//     let signal = await x(URL);
-//     let magSpec = await Y(signal);
-//     let logComp = await logCompression(magSpec, 0.01).array();
-//     let logSpec = await computeSpecLogFreq(logComp, sampleRate, frameSize, midiPitches);
-//     let C = await computeChroma(logSpec, pitchClasses, midiPitches);
-//     let normC = await normalizeFeature(C, 0.001);
+    console.log("signal:");
+    console.log(signal);
 
-//     /* let plot = [
-//         {
-//             z: logSpec,
-//             type: 'heatmap',
-//             colorscale: 'Greys'
-//         }
-//     ];
-//     let plotAudio = chromaHeatMap(plot, 'Spectrum X_n');
-//     Plotly.newPlot('audiofeatures', plot, plotAudio['layout'], {scrollZoom: false}); */
+    if (signal.some(isNaN)) {
+        console.error("NaN found in input signal");
+    }
 
-//     // Save some resources
-//     signal = null;
-//     magSpec = null;
-//     logComp = null;
-//     logSpec = null;
-//     C = null;
-//     ctx.suspend();
+    // Perform Constant Q Transform on the signal
+    const minFreq = 20;       // Minimum frequency
+    const maxFreq = 20000;    // Maximum frequency
+    const binsPerOctave = 12; // Number of bins per octave
 
-//     return normC;
-// }
+    // Precompute windows for CQT
+    precomputeHannWindowsForCQT(minFreq, maxFreq, binsPerOctave, sampleRate);
 
-// Extract audio signal
-let x = async (URL) => {
-    console.log("Step: Decoding");
-    return fetch(URL)
-    .then(data => data.arrayBuffer())
-    .then(arrayBuffer => ctx.decodeAudioData(arrayBuffer))
-    .then(audioData => {
-        console.log(`--Audio duration: ${convertHMS(audioData.length/sampleRate)} minutes`)
-        return audioData.getChannelData(0)
-    })
+    let cqtResult = constantQTransform(signal, sampleRate, minFreq, maxFreq, binsPerOctave);
+
+    // Compute chroma features directly from CQT result
+    let C = await computeChromaFromCQT(cqtResult, pitchClasses);
+    // console.log("C:");
+    // console.log(C);
+
+    // Normalize chroma features
+    let normC = await normalizeFeature(C, 0.001);
+    // console.log("normC:");
+    // console.log(normC);
+
+    // Save some resources
+    // signal = null;
+    // cqtResult = null;
+    // C = null;
+    // ctx.suspend();
+
+    return normC;
+
+}
+
+// Constant Q Transform Implementation in JavaScript
+
+// Helper function to calculate the frequencies for each bin
+function calculateCQTFrequencies(minFreq, maxFreq, binsPerOctave) {
+    const factor = Math.pow(2, 1 / binsPerOctave);
+    let numBins = Math.ceil(binsPerOctave * Math.log2(maxFreq / minFreq));
+    let frequencies = new Array(numBins);
+
+    for (let i = 0; i < numBins; i++) {
+        frequencies[i] = minFreq * Math.pow(factor, i);
+    }
+
+    return frequencies;
+}
+
+
+// CQT main function
+function constantQTransform(signal, sampleRate, minFreq, maxFreq, binsPerOctave) {
+    const frequencies = calculateCQTFrequencies(minFreq, maxFreq, binsPerOctave);
+    let cqtResult = [];
+
+    frequencies.forEach(freq => {
+        const windowSize = nearestPowerOfTwo(Math.floor(sampleRate / freq));
+        const windowedSignal = applyWindowFunction(signal, windowSize);
+
+        // Ensure the windowed signal length matches the FFT size
+        const paddedWindowedSignal = padSignal(windowedSignal, windowSize);
         
+        //let complexWindowedSignal = paddedWindowedSignal.map(value => ({ real: value, imag: 0 }));
+        //const fftResult = cooleyTukeyFFT(complexWindowedSignal);
+        
+        // Usage
+        let complexSignal = convertToComplexArray(signal); // Convert Float32Array to an array of complex numbers
+        const fftResult = cooleyTukeyFFT(complexSignal);
+        const magnitude = extractMagnitude(fftResult);
+
+        cqtResult.push(magnitude);
+    });
+
+    console.log("cqtResult:");
+    console.log(cqtResult);
+
+    return cqtResult;
+}
+
+function cooleyTukeyFFT(signal) {
+    const N = signal.length;
+    if (N <= 1) return signal;
+
+    const bitReversedSignal = bitReverseCopy(signal);
+
+    for (let s = 1; Math.pow(2, s) <= N; s++) {
+        const m = Math.pow(2, s);
+
+        for (let k = 0; k < N; k += m) {
+            let w = { real: 1, imag: 0 };
+
+            for (let j = 0; j < m / 2; j++) {
+                const theta = -2 * Math.PI * j / m;
+                const wm = complexExp(theta);
+
+                const evenIndex = k + j;
+                const oddIndex = k + j + m / 2;
+
+                // // Debugging information
+                // if (oddIndex >= N) {
+                //     console.error("Index out of range", { evenIndex, oddIndex, N });
+                //     continue;
+                // }
+
+                const t = complexMultiply(w, bitReversedSignal[oddIndex]);
+                const u = bitReversedSignal[evenIndex];
+
+                bitReversedSignal[evenIndex] = complexAdd(u, t);
+                bitReversedSignal[oddIndex] = complexSubtract(u, t);
+
+                w = complexMultiply(w, wm);
+            }
+        }
+    }
+
+    return bitReversedSignal;
+}
+
+function bitReverseCopy(signal) {
+    const N = signal.length;
+    const bitReversedSignal = new Array(N);
+
+    for (let i = 0; i < N; ++i) {
+        const bitReversedIndex = bitReverse(i, Math.log2(N));
+        bitReversedSignal[bitReversedIndex] = {...signal[i]};
+    }
+
+    return bitReversedSignal;
+}
+
+function bitReverse(value, bits) {
+    let reversed = 0;
+    for (let i = 0; i < bits; i++) {
+        reversed = (reversed << 1) | (value & 1);
+        value >>= 1;
+    }
+    return reversed;
 }
 
 // Compute magnitude power spectrogram, return Promise
@@ -195,6 +314,31 @@ let normalizeFeature = async (X, threshhold) => {
     }
     return normX;
 }
+
+// Compute the chroma from CQT result
+// cqtResult = array of arrays, each inner array is the magnitude spectrum for a specific frequency bin
+// pitchClasses = number of pitch classes (typically 12 for Western music)
+let computeChromaFromCQT = async (cqtResult, pitchClasses) => {
+    // Number of frames (time slices) in the CQT result
+    const numFrames = cqtResult[0].length;
+
+    // Initialize chroma matrix
+    let C = arrayFilled(pitchClasses, numFrames);
+
+    // Iterate over each frequency bin in the CQT result
+    for (let bin = 0; bin < cqtResult.length; bin++) {
+        // Map the CQT bin to a pitch class
+        let pitchClass = bin % pitchClasses;
+
+        // Add the magnitude spectrum of this bin to the corresponding pitch class in chroma matrix
+        for (let frame = 0; frame < numFrames; frame++) {
+            C[pitchClass][frame] += cqtResult[bin][frame];
+        }
+    }
+
+    // Normalize by the max coefficient
+    return await scaled(C, 1 / await getMaxFromNDimArr(C));
+};
 
 // Read the MIDI file
 async function parseMIDI (file) {
