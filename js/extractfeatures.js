@@ -287,31 +287,28 @@ let computeChroma = async (Y_LF, pitchClasses) => {
 };
 
 // Normalize features
-let normalizeFeature = async (X, threshhold) => {
+function normalizeFeature(X) {
     console.log("Step: Normalize");
 
-    const K = pitchClasses;   
-    const N = X[0].length;    // Frames
+    const K = X.length;    // Number of pitch classes
+    const N = X[0].length; // Number of frames
     let normX = arrayFilled(K, N);
-    let v = 1 / Math.sqrt(K);
 
-    for (let n = 0; n < N; n++) {
-
-        let sumOfSquares = 0;
-        for(let k = 0; k < K; k++) {
-            sumOfSquares += X[k][n] ** 2;
-        }
-        let s = Math.sqrt(sumOfSquares);
-        if (s > threshhold) {
-            for(let k = 0; k < K; k++) {
-                normX[k][n] = X[k][n] / s;
-            }
-        } else {
-            for(let k = 0; k < K; k++) {
-                normX[k][n] = v;
-            }
+    // Find the maximum value in X
+    let maxVal = -Infinity;
+    for (let k = 0; k < K; k++) {
+        for (let n = 0; n < N; n++) {
+            if (X[k][n] > maxVal) maxVal = X[k][n];
         }
     }
+
+    // Normalize by the maximum value
+    for (let k = 0; k < K; k++) {
+        for (let n = 0; n < N; n++) {
+            normX[k][n] = X[k][n] / maxVal;
+        }
+    }
+
     return normX;
 }
 
