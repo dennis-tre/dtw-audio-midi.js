@@ -6,16 +6,9 @@ let dtw = async (X, Y) => {
     // Local weights for the accumulated cost matrix D
     let w = {d: 2, h: 1.5, v: 1.5};
     console.log ("Local weights w: ", w)
-    
-    // Get a global constrain region R, that encodes what portion of the
-    // cost matrix C will be calculated going forward. wsz = WindowSize
-    // This speeds up the computation, but comes at the risk of inaccuracy.
-    // MsDTW and MrMsDTW would be further advanced optimizations.
-    let R = await computeGlobalConstraintRegion(n, m, 0.8);
-    //console.log("Constraint region R:\n", R);
-    
-    let C = await costMatrix(math.transpose(X), math.transpose(Y), R);
-    let D = await computeAccumulatedCostMatrix(C, R, w);
+      
+    let C = await costMatrix(math.transpose(X), math.transpose(Y));
+    let D = await computeAccumulatedCostMatrix(C, w);
     let P = await computeOptimalWarpingPath(D);
 
     console.log("-DTW distance DTW(X,Y) = ", D.at(-1).at(-1));
@@ -28,7 +21,7 @@ let dtw = async (X, Y) => {
 // Distance matrix between any 2 given 2D vectors that have the same number of rows
 // Metric: Cosine distance
 // Cost matrix C
-let costMatrix = async (N, M, R) => {
+let costMatrix = async (N, M) => {
     console.log("Step: Cost matrix");
     let n = N.length;
     let m = M.length;
@@ -36,8 +29,7 @@ let costMatrix = async (N, M, R) => {
     let cosD = arrayFilled(n, m, Infinity);
 
     for(let i = 0; i < n; i++) {
-        // Set boundary conditions from said constraint region R = Sakoe-Chiba band
-        for(let k = R[0][i], len = R[1][i]; k < len; k++) {
+        for(let k = 0; k < m; k++) {
             let ni = N[i];
             let mk = M[k];
             cosD[i][k] = 1 - (math.dot(ni, mk) / (math.norm(ni, 2) * math.norm(mk, 2)));
@@ -46,33 +38,33 @@ let costMatrix = async (N, M, R) => {
     return cosD;
 }
 
+
 // Accumulated cost matrix D
-let computeAccumulatedCostMatrix = async (C, R, w) => {
+let computeAccumulatedCostMatrix = async (C, w) => {
     console.log("Step: Accumulated cost matrix");
     let n = C.length;
+    let m = C[0].length;
 
-    // Use constraint region R to determine which parts of the calculation can be left out
-    // R[0].findIndex(e => e > 0): First starting index R[0][i] where it doesn't touch the border of the matrix anymore
-    for(let i = 1, len = R[0].findIndex(e => e > 0); i < len; i++) {
-        C[i][0] = C[i-1][0] + ( C[i][0] * w['h'] );
+    // Initialize the first row and column
+    for(let i = 1; i < n; i++) {
+        C[i][0] = C[i-1][0] + (C[i][0] * w['h']);
     }   
-
-    for(let j = 1, len = R[1][0]; j < len; j++) {
-        C[0][j] = C[0][j-1] + ( C[0][j] * w['v'] );
+    for(let j = 1; j < m; j++) {
+        C[0][j] = C[0][j-1] + (C[0][j] * w['v']);
     }
 
-    // Fill rest of the matrix w.r.t. R
+    // Fill the rest of the matrix
     for(let i = 1; i < n; i++) {
-        for(let k = 1, len = R[1][i]; k < len; k++) {
+        for(let k = 1; k < m; k++) {
             let C_ik = C[i][k];
-            C[i][k] = Math.min( C[i-1][k] + ( w['h'] * C_ik ), 
-                                C[i][k-1] + ( w['v'] * C_ik ), 
-                                C[i-1][k-1] + ( w['d'] * C_ik ) );
-            /* console.log("D[",i,"][",k,"]: ", D[i][k], " = \nMath.min(\nC[",i-1,"][",k,"]: ", C[i-1][k], " + C[",i,"][",k,"]: ", C[i][k], "\n( = ",C[i-1][k]+C[i][k],"),\nC[",i,"][",k-1,"]: ", C[i][k-1], " + C[",i,"][",k,"]: ", C[i][k], "\n( = ",C[i][k-1]+C[i][k],"),\nC[",i-1,"][",k-1,"]: ", C[i-1][k-1], " + C[",i,"][",k,"]: ", C[i][k], "\n( = ",C[i-1][k-1]+C[i][k],") \n)") */
+            C[i][k] = Math.min( C[i-1][k] + (w['h'] * C_ik), 
+                                C[i][k-1] + (w['v'] * C_ik), 
+                                C[i-1][k-1] + (w['d'] * C_ik));
         }            
     }
     return C;
 }
+
 
 // Optimal warping path P from an accumulated cost matrix D
 let computeOptimalWarpingPath = async (D) => {
