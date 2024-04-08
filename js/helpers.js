@@ -158,7 +158,7 @@ let costPathPlot = (costMat, path) => {
                 size: 24,
                 color: '#e8e6e3',
             },
-            text: '$\\text{Accumulated cost matrix }D\\text{, }\\\\\\text{Optimal warping path }P^{*}_{R}$'
+            text: '$\\text{Accumulated cost matrix }D\\text{, }\\\\\\text{Optimal warping path }P$'
         },
         xaxis: {
             title: '$N$',
